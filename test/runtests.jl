@@ -41,12 +41,13 @@ end
     ub = [1,3,2]
     N = length(lb)
     s = SobolSeq(lb,ub)
-    @test s isa ScaledSobolSeq{3,Int}
+    @test s isa ScaledSobolSeq{Int} && ndims(s) == 3
     @test eltype(s) == Vector{Float64}
     @test eltype(SobolSeq(Float32.(lb),Float32.(ub))) == Vector{Float32}
     @test first(s) == [0,1.5,1]
     @test first(SobolSeq((x for x in lb), (x for x in ub))) == [0,1.5,1]
-    @test SobolSeq(N,lb,ub) isa ScaledSobolSeq{3,Int}
+    s = SobolSeq(N,lb,ub)
+    @test s isa ScaledSobolSeq{Int} && ndims(s) == 3
     @test_throws BoundsError SobolSeq(2,lb,ub)
 end
 
