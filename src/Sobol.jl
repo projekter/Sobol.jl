@@ -6,25 +6,24 @@ include("soboldata.jl") #loads `sobol_a` and `sobol_minit`
 
 abstract type AbstractSobolSeq end
 
-mutable struct SobolSeq <: AbstractSobolSeq
-    const ndims::Int # dimension of sequence being generated
-    m::Array{UInt32,2} #array of size (sdim, 32)
-    x::Array{UInt32,1} #previous x = x_n, array of length sdim
-    b::Array{UInt32,1} #position of fixed point in x[i] is after bit b[i]
+mutable struct SobolSeq{X<:AbstractVector{UInt32}} <: AbstractSobolSeq
+    m::Matrix{UInt32} #array of size (sdim, 32)
+    x::X #previous x = x_n, array of length sdim
+    b::Vector{UInt32} #position of fixed point in x[i] is after bit b[i]
     n::UInt32 #number of x's generated so far
 end
 
-Base.ndims(s::SobolSeq) = s.ndims
+Base.ndims(s::SobolSeq) = length(s.x)
 
-function SobolSeq(N::Int)
+function SobolSeq{X}(N::Integer) where {X<:AbstractVector{UInt32}}
     (N < 0 || N > (length(sobol_a) + 1)) && error("invalid Sobol dimension")
 
     m = ones(UInt32, (N, 32))
 
     #special cases
-    N == 0 && return SobolSeq(0,m,UInt32[],UInt32[],zero(UInt32))
+    N == 0 && return SobolSeq(m,UInt32[],X(undef,0),zero(UInt32))
     #special cases 1
-    N == 1 && return SobolSeq(1,m,UInt32[0],UInt32[0],zero(UInt32))
+    N == 1 && return SobolSeq(m,UInt32[0],fill!(X(undef,1),zero(UInt32)),zero(UInt32))
 
     for i = 2:N
         a = sobol_a[i-1]
@@ -42,9 +41,9 @@ function SobolSeq(N::Int)
             end
         end
     end
-    SobolSeq(N,m,zeros(UInt32,N),zeros(UInt32,N),zero(UInt32))
+    SobolSeq(m,zeros(UInt32,N),fill!(X(undef,N),zero(UInt32)),zero(UInt32))
 end
-SobolSeq(N::Integer) = SobolSeq(Int(N))
+SobolSeq(args...) = SobolSeq{Vector{UInt32}}(args...)
 
 function next!(s::SobolSeq, x::AbstractVector{<:AbstractFloat})
     length(x) != ndims(s) && throw(BoundsError())
@@ -72,7 +71,7 @@ function next!(s::SobolSeq, x::AbstractVector{<:AbstractFloat})
     end
     return x
 end
-next!(s::SobolSeq) = next!(s, Array{Float64,1}(undef, ndims(s)))
+next!(s::SobolSeq) = next!(s, Vector{Float64}(undef, ndims(s)))
 
 # if we know in advance how many points (n) we want to compute, then
 # adopt a suggestion similar to the Joe and Kuo paper, which in turn
@@ -95,7 +94,7 @@ function skip!(s::SobolSeq, n::Integer, x; exact=false)
     for unused=1:nskip; next!(s,x); end
     return s
 end
-Base.skip(s::SobolSeq, n::Integer; exact=false) = skip!(s, n, Array{Float64,1}(undef, ndims(s)); exact=exact)
+Base.skip(s::SobolSeq, n::Integer; exact=false) = skip!(s, n, Vector{Float64}(undef, ndims(s)); exact=exact)
 
 function Base.show(io::IO, s::SobolSeq)
     print(io, "$(ndims(s))-dimensional Sobol sequence on [0,1]^$(ndims(s))")
@@ -115,20 +114,20 @@ Base.IteratorEltype(::Type{<:AbstractSobolSeq}) = Base.HasEltype()
 
 # Convenience wrapper for scaled Sobol sequences
 
-struct ScaledSobolSeq{T} <: AbstractSobolSeq
-    s::SobolSeq
+struct ScaledSobolSeq{T,X<:AbstractVector{UInt32}} <: AbstractSobolSeq
+    s::SobolSeq{X}
     lb::Vector{T}
     ub::Vector{T}
-    function ScaledSobolSeq{T}(lb::Vector{T}, ub::Vector{T}) where {T}
+    function ScaledSobolSeq{T,X}(lb::Vector{T}, ub::Vector{T}) where {T,X<:AbstractVector{UInt32}}
         length(lb)==length(ub) || throw(DimensionMismatch("lb and ub do not have same length"))
-        new(SobolSeq(length(lb)), lb, ub)
+        new{T,X}(SobolSeq{X}(length(lb)), lb, ub)
     end
 end
-function SobolSeq(N::Integer, lb, ub)
+function SobolSeq{X}(N::Integer, lb, ub) where {X<:AbstractVector{UInt32}}
     T = typeof(sum(ub) - sum(lb))
-    ScaledSobolSeq{T}(copyto!(Vector{T}(undef,N), lb), copyto!(Vector{T}(undef,N), ub))
+    ScaledSobolSeq{T,X}(copyto!(Vector{T}(undef,N), lb), copyto!(Vector{T}(undef,N), ub))
 end
-SobolSeq(lb, ub) = SobolSeq(length(lb), lb, ub)
+SobolSeq{X}(lb, ub) where {X<:AbstractVector{UInt32}} = SobolSeq{X}(length(lb), lb, ub)
 Base.ndims(s::ScaledSobolSeq) = ndims(s.s)
 
 function next!(s::SobolSeq, x::AbstractVector{<:AbstractFloat},
@@ -147,7 +146,7 @@ end
 
 next!(s::ScaledSobolSeq, x::AbstractVector{<:AbstractFloat}) = next!(s.s, x, s.lb, s.ub)
 next!(s::ScaledSobolSeq{T}) where {T} = next!(s.s, Vector{float(T)}(undef, ndims(s)), s.lb, s.ub)
-Base.eltype(::Type{ScaledSobolSeq{T}}) where {T} = Vector{float(T)}
+Base.eltype(::Type{<:ScaledSobolSeq{T}}) where {T} = Vector{float(T)}
 
 Base.skip(s::ScaledSobolSeq, n; exact = false) = (skip(s.s, n; exact = exact); s)
 
@@ -155,7 +154,7 @@ function Base.show(io::IO, s::ScaledSobolSeq{T}) where {T}
     lb = s.lb; ub = s.ub
     print(io, "$(ndims(s))-dimensional scaled $(float(T)) Sobol sequence on [$(lb[1]),$(ub[1])]")
     cnt = 1
-    for i = 2:N
+    for i = 2:ndims(s)
         if lb[i] == lb[i-1] && ub[i] == ub[i-1]
             cnt += 1
         else
@@ -175,7 +174,7 @@ function Base.show(io::IO, ::MIME"text/html", s::ScaledSobolSeq{T}) where {T}
     lb = s.lb; ub = s.ub
     print(io, "$(ndims(s))-dimensional scaled $(float(T)) Sobol sequence on [$(lb[1]),$(ub[1])]")
     cnt = 1
-    for i = 2:N
+    for i = 2:ndims(s)
         if lb[i] == lb[i-1] && ub[i] == ub[i-1]
             cnt += 1
         else
