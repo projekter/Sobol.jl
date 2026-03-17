@@ -15,15 +15,16 @@ end
 
 Base.ndims(s::SobolSeq) = length(s.x)
 
-function SobolSeq{X}(N::Integer) where {X<:AbstractVector{UInt32}}
+function SobolSeq(x::AbstractVector{UInt32})
+    N = length(x)
     (N < 0 || N > (length(sobol_a) + 1)) && error("invalid Sobol dimension")
 
     m = ones(UInt32, (N, 32))
 
     #special cases
-    N == 0 && return SobolSeq(m,UInt32[],X(undef,0),zero(UInt32))
+    N == 0 && return SobolSeq(m,UInt32[],x,zero(UInt32))
     #special cases 1
-    N == 1 && return SobolSeq(m,UInt32[0],fill!(X(undef,1),zero(UInt32)),zero(UInt32))
+    N == 1 && return SobolSeq(m,UInt32[0],fill!(x,zero(UInt32)),zero(UInt32))
 
     for i = 2:N
         a = sobol_a[i-1]
@@ -41,9 +42,9 @@ function SobolSeq{X}(N::Integer) where {X<:AbstractVector{UInt32}}
             end
         end
     end
-    SobolSeq(m,zeros(UInt32,N),fill!(X(undef,N),zero(UInt32)),zero(UInt32))
+    SobolSeq(m,zeros(UInt32,N),fill!(x,zero(UInt32)),zero(UInt32))
 end
-SobolSeq(args...) = SobolSeq{Vector{UInt32}}(args...)
+SobolSeq(N::Integer) = SobolSeq(Vector{UInt32}(undef, N))
 
 function next!(s::SobolSeq, x::AbstractVector{<:AbstractFloat})
     length(x) != ndims(s) && throw(BoundsError())
@@ -114,20 +115,27 @@ Base.IteratorEltype(::Type{<:AbstractSobolSeq}) = Base.HasEltype()
 
 # Convenience wrapper for scaled Sobol sequences
 
-struct ScaledSobolSeq{T,X<:AbstractVector{UInt32}} <: AbstractSobolSeq
+struct ScaledSobolSeq{T,X<:AbstractVector{UInt32},B<:AbstractVector{T}} <: AbstractSobolSeq
     s::SobolSeq{X}
-    lb::Vector{T}
-    ub::Vector{T}
-    function ScaledSobolSeq{T,X}(lb::Vector{T}, ub::Vector{T}) where {T,X<:AbstractVector{UInt32}}
-        length(lb)==length(ub) || throw(DimensionMismatch("lb and ub do not have same length"))
-        new{T,X}(SobolSeq{X}(length(lb)), lb, ub)
+    lb::B
+    ub::B
+    function ScaledSobolSeq(x::X, lb::B, ub::B) where {T,X<:AbstractVector{UInt32},B<:AbstractVector{T}}
+        length(x)==length(lb)==length(ub) || throw(DimensionMismatch("x, lb, and ub do not all have same length"))
+        new{T,X,B}(SobolSeq(x), lb, ub)
     end
 end
-function SobolSeq{X}(N::Integer, lb, ub) where {X<:AbstractVector{UInt32}}
-    T = typeof(sum(ub) - sum(lb))
-    ScaledSobolSeq{T,X}(copyto!(Vector{T}(undef,N), lb), copyto!(Vector{T}(undef,N), ub))
+function SobolSeq(x::AbstractVector{UInt32}, lb::B, ub::B) where {B}
+    if Base.IteratorEltype(B) === Base.HasEltype()
+        T = eltype(B)
+    else
+        i = iterate(lb)
+        isnothing(i) && error("Cannot determine eltype of empty iterator")
+        T = typeof(i[1])
+    end
+    ScaledSobolSeq(x, copyto!(Vector{T}(undef,length(x)), lb), copyto!(Vector{T}(undef, length(x)), ub))
 end
-SobolSeq{X}(lb, ub) where {X<:AbstractVector{UInt32}} = SobolSeq{X}(length(lb), lb, ub)
+SobolSeq(N::Integer, lb, ub) = SobolSeq(Vector{UInt32}(undef, N), lb, ub)
+SobolSeq(lb, ub) = SobolSeq(length(lb), lb, ub)
 Base.ndims(s::ScaledSobolSeq) = ndims(s.s)
 
 function next!(s::SobolSeq, x::AbstractVector{<:AbstractFloat},
